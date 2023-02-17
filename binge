@@ -1,0 +1,161 @@
+#! /usr/bin/env python3
+
+"""
+bingewatch allows bulk-downloading videos from YouTube so you can
+easily synchronise videos from specific users or channels to watch
+later when you might have poor or no connectivity.
+"""
+
+import os
+import os.path
+import re
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from urllib.request import urlopen
+
+CHANNELS_FILE="./channels.txt"
+ARCHIVE_FILE="./seen.txt"
+YT_DLP="yt-dlp"
+
+def die(msg):
+    sys.exit(f"Error: {msg}")
+
+def get_feed_xml(channel_id):
+    url = "https://www.youtube.com/feeds/videos.xml?channel_id=" + channel_id
+
+    with urlopen(url, None) as feed:
+        xml = feed.read()
+
+        root = ET.fromstring(xml)
+        return [
+            el.get("url")
+            for el in root.findall(
+                ".//media:content/[@url]",
+                {"media": "http://search.yahoo.com/mrss/"}
+            )
+        ]
+
+def only_new_videos(url):
+    vid_id = (url.split("/")[-1]).split("?")[0]
+    seen_file = Path(ARCHIVE_FILE)
+
+    if not seen_file.exists():
+        return True
+
+    with open(seen_file) as s:
+        seen = s.read().splitlines()
+        return not [f for f in seen if vid_id in f]
+
+def fetch_video(url):
+    try:
+        subprocess.run(
+            [
+                YT_DLP,
+                "-S res:1080",
+                "--restrict-filenames",
+                "-o",
+                "%(upload_date)s-%(title)s__%(id)s.%(ext)s",
+                "--download-archive", "seen.txt",
+                url,
+            ],
+            check=False,
+        )
+    except KeyboardInterrupt:
+        sys.exit(1)
+
+def run():
+    config_file = Path(CHANNELS_FILE)
+
+    if not config_file.exists():
+        die(f"No config file found; expected {CHANNELS_FILE}")
+
+    cwd = os.getcwd()
+    with open(config_file) as fh:
+        for line in fh:
+            if re.match(r"\s*#", line):
+                continue
+
+            words = line.split()
+
+            if len(words) == 2:
+                print("Channel " + words[0])
+                d = Path(words[0])
+                d.mkdir(exist_ok=True)
+                try:
+                    os.chdir(d)
+                    vid_urls = get_feed_xml(words[1])
+                    vid_urls.reverse()
+                    for u in filter(only_new_videos, vid_urls):
+                        fetch_video(u)
+                finally:
+                    os.chdir(cwd)
+            else:
+                die(f"Unrecognised line in config file:\n{line}")
+
+def get_channel_id(url):
+    import json
+
+    # Even users are channels behind the scene; this approach allows us to
+    # accept video URLs or references, channel URLs, or user URLS.
+    info_result = subprocess.run(
+        [
+            YT_DLP,
+            "--max-downloads", "1",
+            "-j",
+            url
+        ],
+        capture_output=True, check=False
+    )
+
+    try:
+        info_json = json.loads(info_result.stdout)
+
+        if "channel_id" in info_json:
+            return info_json["channel_id"]
+
+        die(f"Couldn't find channel_id for {url}")
+    except json.decoder.JSONDecodeError:
+        die(f"Couldn't parse JSON from {url}\n" \
+            "This can be temporary; please try again.")
+
+def add_source(name, ref):
+    config_file = Path(CHANNELS_FILE)
+    if ref.startswith("UC"):
+        channel_id = ref
+    else:
+        channel_id = get_channel_id(ref)
+
+    try:
+        with open(config_file, "a") as fh:
+            fh.write(f"{name} {channel_id}\n")
+    except Exception:
+        die(f"Couldn't write to config file {CHANNELS_FILE}")
+
+def usage():
+    cmd = sys.argv[0]
+
+    print(f"""Usage:
+    {cmd} - download new videos
+
+    {cmd} add NAME URL - add a new channel to the configuration file.
+        URL can be:
+          - a specific video on YouTube
+          - a channel or user homepage on YouTube
+
+    {cmd} add NAME CHANNEL_ID - add a new channel to the configuration file.
+    """)
+
+def main():
+    arg_len = len(sys.argv)
+
+    if arg_len == 1:
+        run()
+    elif arg_len == 4 and sys.argv[1] == "add":
+        add_source(sys.argv[2], sys.argv[3])
+    else:
+        usage()
+
+if __name__ == "__main__":
+    main()
