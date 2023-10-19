@@ -61,6 +61,12 @@ them higher up the file.
 You can temporarily ignore a channel by commenting out its line with a leading
 `#`
 
+### Scanning
+
+Run `./binge show` to just list new videos without downloading them.  This is
+essentially a dry run, and otherwise works exactly like normal Bingewatch
+invocation.
+
 ## Caveats
 
 The YouTube channel RSS feeds only contain the most recent 15 videos.  If your

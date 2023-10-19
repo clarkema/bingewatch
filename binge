@@ -65,7 +65,7 @@ def fetch_video(url):
     except KeyboardInterrupt:
         sys.exit(1)
 
-def run():
+def with_each_new_video(callback):
     config_file = Path(CHANNELS_FILE)
 
     if not config_file.exists():
@@ -88,11 +88,15 @@ def run():
                     vid_urls = get_feed_xml(words[1])
                     vid_urls.reverse()
                     for u in filter(only_new_videos, vid_urls):
-                        fetch_video(u)
+                        callback(u)
                 finally:
                     os.chdir(cwd)
             else:
                 die(f"Unrecognised line in config file:\n{line}")
+
+
+def run():
+    with_each_new_video(fetch_video)
 
 def get_channel_id(url):
     import json
@@ -133,11 +137,16 @@ def add_source(name, ref):
     except Exception:
         die(f"Couldn't write to config file {CHANNELS_FILE}")
 
+def show_pending():
+    with_each_new_video(print)
+
 def usage():
     cmd = sys.argv[0]
 
     print(f"""Usage:
     {cmd} - download new videos
+
+    {cmd} show - show pending videos
 
     {cmd} add NAME URL - add a new channel to the configuration file.
         URL can be:
@@ -152,6 +161,8 @@ def main():
 
     if arg_len == 1:
         run()
+    elif arg_len == 2 and sys.argv[1] == "show":
+        show_pending()
     elif arg_len == 4 and sys.argv[1] == "add":
         add_source(sys.argv[2], sys.argv[3])
     else:
